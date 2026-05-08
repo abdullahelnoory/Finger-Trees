@@ -766,20 +766,127 @@ export const split = <V, A>(
 // ---------------------------------------------------------------------------
 // Higher-order traversals
 // ---------------------------------------------------------------------------
+const mapRec = <V, A, B>(
+  t: FingerTree<V, A>,
+  f: (a: A) => B,
+  m: Measured<B, V>,
+): Trampoline<FingerTree<V, B>> => {
+  if (isEmpty(t)) {
+    return empty(m);
+  }
+  if (isSingle(t)) {
+    return single(m, f(t.value));
+  }
+  if (isDeep(t)) {
+    const mapAffix = (affix: Affix<V, A>): Affix<V, B> => {
+      const mapped = affix.toList().map(f);
+      if (mapped.length === 1) return one(m, mapped[0]);
+      if (mapped.length === 2) return two(m, mapped[0], mapped[1]);
+      if (mapped.length === 3) return three(m, mapped[0], mapped[1], mapped[2]);
+      return four(m, mapped[0], mapped[1], mapped[2], mapped[3]);
+    };
+
+    const newPrefix = mapAffix(t.prefix);
+    const newSuffix = mapAffix(t.suffix);
+
+    const mapNode = (node: Node<V, A>): Node<V, B> => {
+      const mapped = node.toList().map(f);
+      if (mapped.length === 2) return branch2(m, mapped[0], mapped[1]);
+      return branch3(m, mapped[0], mapped[1], mapped[2]);
+    };
+
+    const nodeMeasured: Measured<Node<V, B>, V> = {
+      empty: m.empty,
+      measure: (node: Node<V, B>) => node.annotation,
+      combine: (v1, v2) => m.combine(v1, v2),
+      combineAll: m.combineAll,
+      combineMany: m.combineMany,
+    };
+
+    return () => flatMap(
+      mapRec(t.deeper, mapNode, nodeMeasured),
+      (newDeeper) => {
+        const annotation = m.combine(
+          newPrefix.annotation,
+          m.combine(newDeeper.annotation, newSuffix.annotation)
+        );
+        return new DeepImpl(m, annotation, newPrefix, newDeeper, newSuffix);
+      }
+    );
+  }
+  return empty(m);
+};
+
 export const map = <V, A, B>(
   _t: FingerTree<V, A>,
   _f: (a: A) => B,
   _m: Measured<B, V>,
-): FingerTree<V, B> => NOT_IMPLEMENTED("map");
+): FingerTree<V, B> => trampoline(mapRec)(_t, _f, _m);
+
+const foldlRec = <V, A, B>(
+  f: (acc: B, a: A) => B,
+  acc: B,
+  t: FingerTree<V, A>,
+): Trampoline<B> => {
+  if (isEmpty(t)) {
+    return acc;
+  }
+  if (isSingle(t)) {
+    return f(acc, t.value);
+  }
+  if (isDeep(t)) {
+    const acc1 = t.prefix.toList().reduce(f, acc);
+    
+    const foldNode = (accNode: B, node: Node<V, A>): B => {
+      return node.toList().reduce(f, accNode);
+    };
+    
+    return () => flatMap(
+      foldlRec(foldNode, acc1, t.deeper),
+      (acc2) => {
+        return t.suffix.toList().reduce(f, acc2);
+      }
+    );
+  }
+  return acc;
+};
 
 export const foldl = <V, A, B>(
   _f: (acc: B, a: A) => B,
   _init: B,
   _t: FingerTree<V, A>,
-): B => NOT_IMPLEMENTED("foldl");
+): B => trampoline(foldlRec)(_f, _init, _t);
+
+const foldrRec = <V, A, B>(
+  f: (a: A, acc: B) => B,
+  acc: B,
+  t: FingerTree<V, A>,
+): Trampoline<B> => {
+  if (isEmpty(t)) {
+    return acc;
+  }
+  if (isSingle(t)) {
+    return f(t.value, acc);
+  }
+  if (isDeep(t)) {
+    const acc1 = t.suffix.toList().reduceRight((accSuff, a) => f(a, accSuff), acc);
+    
+    const foldNode = (node: Node<V, A>, accNode: B): B => {
+      return node.toList().reduceRight((accN, a) => f(a, accN), accNode);
+    };
+    
+    return () => flatMap(
+      foldrRec(foldNode, acc1, t.deeper),
+      (acc2) => {
+        return t.prefix.toList().reduceRight((accPref, a) => f(a, accPref), acc2);
+      }
+    );
+  }
+  return acc;
+};
 
 export const foldr = <V, A, B>(
   _f: (a: A, acc: B) => B,
   _init: B,
   _t: FingerTree<V, A>,
-): B => NOT_IMPLEMENTED("foldr");
+): B => trampoline(foldrRec)(_f, _init, _t);

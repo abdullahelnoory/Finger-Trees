@@ -20,18 +20,26 @@
  *     `Iterable` is the convention for `IterableIterator`).
  */
 import type { FingerTree } from "./FingerTree.ts";
+import { head, tail } from "./FingerTree.ts";
+import * as O from "effect/Option";
 
 export class FingerTreeIterator<V, A> implements IterableIterator<A> {
-  constructor(_tree: FingerTree<V, A>) {
-    throw new Error(
-      "FingerTreeIterator constructor is not implemented yet. See TASK.md §3.1.",
-    );
+  private current: FingerTree<V, A>;
+
+  constructor(tree: FingerTree<V, A>) {
+    this.current = tree;
   }
 
   next(): IteratorResult<A> {
-    throw new Error(
-      "FingerTreeIterator.next is not implemented yet. See TASK.md §3.1.",
-    );
+    const h = head(this.current);
+    if (O.isNone(h)) {
+      return { done: true, value: undefined };
+    }
+    const t = tail(this.current);
+    if (O.isSome(t)) {
+      this.current = t.value;
+    }
+    return { done: false, value: h.value };
   }
 
   [Symbol.iterator](): IterableIterator<A> {

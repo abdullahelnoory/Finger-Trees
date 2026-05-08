@@ -61,4 +61,4 @@ export const peek = <P, A>(
 ): O.Option<Prioritized<P, A>> => NOT_IMPLEMENTED("peek");
 
 export const size = <P, A>(_q: FingerPriorityQueue<P, A>): number =>
-  NOT_IMPLEMENTED("size");
+  _q.size;

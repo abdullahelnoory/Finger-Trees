@@ -31,7 +31,7 @@ import {
 } from "../internal/fingerTree/FingerTree.ts";
 import type { Measured } from "@monoids";
 import type { Node } from "../internal/fingerTree/nodes.ts";
-import { one, two, three, four, branch2, branch3 } from "../internal/fingerTree/nodes.ts";
+import { one, two, three, four, branch2, branch3, isOne, isTwo, isThree, isFour } from "../internal/fingerTree/nodes.ts";
 
 const NOT_IMPLEMENTED = (name: string): never => {
   throw new Error(
@@ -154,10 +154,109 @@ export const fromArray = <V, A>(
 // ---------------------------------------------------------------------------
 // Cons / Snoc / Views
 // ---------------------------------------------------------------------------
-export const prepend = <V, A>(_t: FingerTree<V, A>, _x: A): FingerTree<V, A> =>
-  NOT_IMPLEMENTED("prepend");
-export const append = <V, A>(_t: FingerTree<V, A>, _x: A): FingerTree<V, A> =>
-  NOT_IMPLEMENTED("append");
+export const prepend = <V, A>(t: FingerTree<V, A>, x: A): FingerTree<V, A> => {
+  if (isEmpty(t)) {
+    return single(t.m, x);
+  }
+  if (isSingle(t)) {
+    const prefix = one(t.m, x);
+    const suffix = one(t.m, t.value);
+    const emptyDeeper: FingerTree<V, Node<V, A>> = empty(t.m);
+    const annotation = t.m.combine(prefix.annotation, suffix.annotation);
+    return new DeepImpl(t.m, annotation, prefix, emptyDeeper, suffix);
+  }
+  if (isDeep(t)) {
+    // Check if prefix has room
+    if (isOne(t.prefix)) {
+      // prefix has 1 element, make it 2
+      const newPrefix = two(t.m, x, t.prefix.a);
+      const annotation = t.m.combine(
+        newPrefix.annotation,
+        t.m.combine(t.deeper.annotation, t.suffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, newPrefix, t.deeper, t.suffix);
+    } else if (isTwo(t.prefix)) {
+      // prefix has 2 elements, make it 3
+      const newPrefix = three(t.m, x, t.prefix.a, t.prefix.b);
+      const annotation = t.m.combine(
+        newPrefix.annotation,
+        t.m.combine(t.deeper.annotation, t.suffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, newPrefix, t.deeper, t.suffix);
+    } else if (isThree(t.prefix)) {
+      // prefix has 3 elements, make it 4
+      const newPrefix = four(t.m, x, t.prefix.a, t.prefix.b, t.prefix.c);
+      const annotation = t.m.combine(
+        newPrefix.annotation,
+        t.m.combine(t.deeper.annotation, t.suffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, newPrefix, t.deeper, t.suffix);
+    } else if (isFour(t.prefix)) {
+      // prefix is full, need to push it into deeper as a node
+      const node = branch3(t.m, t.prefix.b, t.prefix.c, t.prefix.d);
+      const newDeeper = prepend(t.deeper, node);
+      const newPrefix = one(t.m, x);
+      const annotation = t.m.combine(
+        newPrefix.annotation,
+        t.m.combine(newDeeper.annotation, t.suffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, newPrefix, newDeeper, t.suffix);
+    }
+  }
+  return t;
+};
+
+export const append = <V, A>(t: FingerTree<V, A>, x: A): FingerTree<V, A> => {
+  if (isEmpty(t)) {
+    return single(t.m, x);
+  }
+  if (isSingle(t)) {
+    const prefix = one(t.m, t.value);
+    const suffix = one(t.m, x);
+    const emptyDeeper: FingerTree<V, Node<V, A>> = empty(t.m);
+    const annotation = t.m.combine(prefix.annotation, suffix.annotation);
+    return new DeepImpl(t.m, annotation, prefix, emptyDeeper, suffix);
+  }
+  if (isDeep(t)) {
+    // Check if suffix has room
+    if (isOne(t.suffix)) {
+      // suffix has 1 element, make it 2
+      const newSuffix = two(t.m, t.suffix.a, x);
+      const annotation = t.m.combine(
+        t.prefix.annotation,
+        t.m.combine(t.deeper.annotation, newSuffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, t.prefix, t.deeper, newSuffix);
+    } else if (isTwo(t.suffix)) {
+      // suffix has 2 elements, make it 3
+      const newSuffix = three(t.m, t.suffix.a, t.suffix.b, x);
+      const annotation = t.m.combine(
+        t.prefix.annotation,
+        t.m.combine(t.deeper.annotation, newSuffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, t.prefix, t.deeper, newSuffix);
+    } else if (isThree(t.suffix)) {
+      // suffix has 3 elements, make it 4
+      const newSuffix = four(t.m, t.suffix.a, t.suffix.b, t.suffix.c, x);
+      const annotation = t.m.combine(
+        t.prefix.annotation,
+        t.m.combine(t.deeper.annotation, newSuffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, t.prefix, t.deeper, newSuffix);
+    } else if (isFour(t.suffix)) {
+      // suffix is full, need to push it into deeper as a node
+      const node = branch3(t.m, t.suffix.a, t.suffix.b, t.suffix.c);
+      const newDeeper = append(t.deeper, node);
+      const newSuffix = one(t.m, x);
+      const annotation = t.m.combine(
+        t.prefix.annotation,
+        t.m.combine(newDeeper.annotation, newSuffix.annotation)
+      );
+      return new DeepImpl(t.m, annotation, t.prefix, newDeeper, newSuffix);
+    }
+  }
+  return t;
+};
 
 export const head = <V, A>(_t: FingerTree<V, A>): O.Option<A> => {
   if (isEmpty(_t)) {

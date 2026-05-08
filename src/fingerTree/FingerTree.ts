@@ -19,6 +19,7 @@
  * https://www.staff.city.ac.uk/~ross/papers/FingerTree.pdf
  */
 import * as O from "effect/Option";
+import { Trampoline, trampoline, flatMap } from "../utils/trampoline.ts";
 import {
   DeepImpl,
   EmptyImpl,
@@ -231,7 +232,7 @@ export const prepend = <V, A>(t: FingerTree<V, A>, x: A): FingerTree<V, A> => {
       // prefix is full, need to push it into deeper as a node
       const node = branch3(t.m, t.prefix.b, t.prefix.c, t.prefix.d);
       const newDeeper = prepend(t.deeper, node);
-      const newPrefix = one(t.m, x);
+      const newPrefix = two(t.m, x, t.prefix.a);
       const annotation = t.m.combine(
         newPrefix.annotation,
         t.m.combine(newDeeper.annotation, t.suffix.annotation)
@@ -283,7 +284,7 @@ export const append = <V, A>(t: FingerTree<V, A>, x: A): FingerTree<V, A> => {
       // suffix is full, need to push it into deeper as a node
       const node = branch3(t.m, t.suffix.a, t.suffix.b, t.suffix.c);
       const newDeeper = append(t.deeper, node);
-      const newSuffix = one(t.m, x);
+      const newSuffix = two(t.m, t.suffix.d, x);
       const annotation = t.m.combine(
         t.prefix.annotation,
         t.m.combine(newDeeper.annotation, newSuffix.annotation)
@@ -524,10 +525,101 @@ export const init = <V, A>(_t: FingerTree<V, A>): O.Option<FingerTree<V, A>> => 
 // ---------------------------------------------------------------------------
 // Concat & Split  (the two operations that justify finger trees)
 // ---------------------------------------------------------------------------
+const buildNodes = <V, T>(m: Measured<T, V>, elements: T[]): Node<V, T>[] => {
+  const nodes: Node<V, T>[] = [];
+  let i = 0;
+  while (i < elements.length) {
+    const remaining = elements.length - i;
+    if (remaining === 2) {
+      nodes.push(branch2(m, elements[i], elements[i + 1]));
+      i += 2;
+    } else if (remaining === 3) {
+      nodes.push(branch3(m, elements[i], elements[i + 1], elements[i + 2]));
+      i += 3;
+    } else if (remaining === 4) {
+      nodes.push(branch2(m, elements[i], elements[i + 1]));
+      i += 2;
+    } else {
+      nodes.push(branch3(m, elements[i], elements[i + 1], elements[i + 2]));
+      i += 3;
+    }
+  }
+  return nodes;
+};
+
+const app3Rec = <V, T>(
+  m: Measured<T, V>,
+  t1: FingerTree<V, T>,
+  ts: T[],
+  t2: FingerTree<V, T>,
+): Trampoline<FingerTree<V, T>> => {
+  if (isEmpty(t1)) {
+    let result = t2;
+    for (let i = ts.length - 1; i >= 0; i--) {
+      result = prepend(result, ts[i]);
+    }
+    return result;
+  }
+  if (isEmpty(t2)) {
+    let result = t1;
+    for (let i = 0; i < ts.length; i++) {
+      result = append(result, ts[i]);
+    }
+    return result;
+  }
+  if (isSingle(t1)) {
+    return () => flatMap(
+      app3Rec(m, empty(m), ts, t2),
+      (res) => prepend(res, t1.value)
+    );
+  }
+  if (isSingle(t2)) {
+    return () => flatMap(
+      app3Rec(m, t1, ts, empty(m)),
+      (res) => append(res, t2.value)
+    );
+  }
+
+  if (isDeep(t1) && isDeep(t2)) {
+    const nodeMeasured: Measured<Node<V, T>, V> = {
+      empty: m.empty,
+      measure: (node: Node<V, T>) => node.annotation,
+      combine: (v1, v2) => m.combine(v1, v2),
+      combineAll: (vs) => m.combineAll(vs),
+      combineMany: (v, vs) => m.combineMany(v, vs),
+    };
+
+    const elements = [...t1.suffix.toList(), ...ts, ...t2.prefix.toList()];
+    const nodes = buildNodes(m, elements);
+
+    return () => flatMap(
+      app3Rec(nodeMeasured, t1.deeper, nodes, t2.deeper),
+      (deeperRes) => {
+        const annotation = m.combine(
+          t1.prefix.annotation,
+          m.combine(deeperRes.annotation, t2.suffix.annotation)
+        );
+        return new DeepImpl(m, annotation, t1.prefix, deeperRes, t2.suffix);
+      }
+    );
+  }
+
+  return empty(m);
+};
+
+const _app3Trampolined = trampoline(app3Rec);
+
+const app3 = <V, T>(m: Measured<T, V>, t1: FingerTree<V, T>, ts: T[], t2: FingerTree<V, T>): FingerTree<V, T> => {
+  return (_app3Trampolined as any)(m, t1, ts, t2);
+};
+
 export const concat = <V, A>(
   _l: FingerTree<V, A>,
   _r: FingerTree<V, A>,
-): FingerTree<V, A> => NOT_IMPLEMENTED("concat");
+  _ts: A[] = [],
+): FingerTree<V, A> => {
+  return app3(_l.m, _l, _ts, _r);
+};
 
 export const split = <V, A>(
   _predicate: (v: V) => boolean,

@@ -29,9 +29,10 @@ import {
   SingleImpl,
   type FingerTree as FT,
   type Split as Sp,
+  Split as SplitImpl,
 } from "../internal/fingerTree/FingerTree.ts";
 import type { Measured } from "@monoids";
-import type { Node } from "../internal/fingerTree/nodes.ts";
+import type { Affix, Node } from "../internal/fingerTree/nodes.ts";
 import { one, two, three, four, branch2, branch3, isOne, isTwo, isThree, isFour } from "../internal/fingerTree/nodes.ts";
 
 const NOT_IMPLEMENTED = (name: string): never => {
@@ -621,11 +622,146 @@ export const concat = <V, A>(
   return app3(_l.m, _l, _ts, _r);
 };
 
+const buildAffix = <V, A>(m: Measured<A, V>, elements: readonly A[]): Affix<V, A> => {
+  if (elements.length === 1) return one(m, elements[0]);
+  if (elements.length === 2) return two(m, elements[0], elements[1]);
+  if (elements.length === 3) return three(m, elements[0], elements[1], elements[2]);
+  if (elements.length === 4) return four(m, elements[0], elements[1], elements[2], elements[3]);
+  throw new Error("Invalid affix length");
+};
+
+const deepL = <V, A>(
+  m: Measured<A, V>,
+  prefixElements: readonly A[],
+  deeper: FingerTree<V, Node<V, A>>,
+  suffix: Affix<V, A>
+): FingerTree<V, A> => {
+  if (prefixElements.length === 0) {
+    const headNode = head(deeper);
+    if (O.isNone(headNode)) {
+      return fromArray(suffix.toList(), m);
+    }
+    const firstNode = headNode.value;
+    const restDeeper = O.getOrThrow(tail(deeper));
+    const newPrefix = buildAffix(m, firstNode.toList());
+    const annotation = m.combine(newPrefix.annotation, m.combine(restDeeper.annotation, suffix.annotation));
+    return new DeepImpl(m, annotation, newPrefix, restDeeper, suffix);
+  } else {
+    const newPrefix = buildAffix(m, prefixElements);
+    const annotation = m.combine(newPrefix.annotation, m.combine(deeper.annotation, suffix.annotation));
+    return new DeepImpl(m, annotation, newPrefix, deeper, suffix);
+  }
+};
+
+const deepR = <V, A>(
+  m: Measured<A, V>,
+  prefix: Affix<V, A>,
+  deeper: FingerTree<V, Node<V, A>>,
+  suffixElements: readonly A[]
+): FingerTree<V, A> => {
+  if (suffixElements.length === 0) {
+    const lastNode = last(deeper);
+    if (O.isNone(lastNode)) {
+      return fromArray(prefix.toList(), m);
+    }
+    const lastNodeVal = lastNode.value;
+    const restDeeper = O.getOrThrow(init(deeper));
+    const newSuffix = buildAffix(m, lastNodeVal.toList());
+    const annotation = m.combine(prefix.annotation, m.combine(restDeeper.annotation, newSuffix.annotation));
+    return new DeepImpl(m, annotation, prefix, restDeeper, newSuffix);
+  } else {
+    const newSuffix = buildAffix(m, suffixElements);
+    const annotation = m.combine(prefix.annotation, m.combine(deeper.annotation, newSuffix.annotation));
+    return new DeepImpl(m, annotation, prefix, deeper, newSuffix);
+  }
+};
+
+const splitArray = <V, A>(
+  m: Measured<A, V>,
+  predicate: (v: V) => boolean,
+  start: V,
+  elements: readonly A[]
+): { left: A[], value: A, right: A[] } => {
+  let acc = start;
+  for (let i = 0; i < elements.length; i++) {
+    const val = elements[i];
+    const valMeasure = m.measure(val);
+    const nextAcc = m.combine(acc, valMeasure);
+    if (predicate(nextAcc)) {
+      return {
+        left: elements.slice(0, i) as A[],
+        value: val,
+        right: elements.slice(i + 1) as A[]
+      };
+    }
+    acc = nextAcc;
+  }
+  return {
+    left: elements.slice(0, elements.length - 1) as A[],
+    value: elements[elements.length - 1],
+    right: []
+  };
+};
+
+const splitTree = <V, A>(
+  m: Measured<A, V>,
+  predicate: (v: V) => boolean,
+  start: V,
+  t: FingerTree<V, A>
+): Sp<V, A> => {
+  if (isSingle(t)) {
+    return new SplitImpl(empty(m), t.value, empty(m));
+  }
+  
+  if (isDeep(t)) {
+    const prefixAcc = m.combine(start, t.prefix.annotation);
+    if (predicate(prefixAcc)) {
+      const { left, value, right } = splitArray(m, predicate, start, t.prefix.toList());
+      return new SplitImpl(fromArray(left, m), value, deepL(m, right, t.deeper, t.suffix));
+    }
+    
+    const deeperAcc = m.combine(prefixAcc, t.deeper.annotation);
+    if (predicate(deeperAcc)) {
+      const nodeMeasured: Measured<Node<V, A>, V> = {
+        empty: m.empty,
+        measure: (node: Node<V, A>) => node.annotation,
+        combine: (v1, v2) => m.combine(v1, v2),
+        combineAll: m.combineAll,
+        combineMany: m.combineMany,
+      };
+      
+      const splitDeeper = splitTree(nodeMeasured, predicate, prefixAcc, t.deeper);
+      
+      const nodeStart = m.combine(prefixAcc, splitDeeper.left.annotation);
+      const { left, value, right } = splitArray(m, predicate, nodeStart, splitDeeper.value.toList());
+      
+      return new SplitImpl(
+        deepR(m, t.prefix, splitDeeper.left, left),
+        value,
+        deepL(m, right, splitDeeper.right, t.suffix)
+      );
+    }
+    
+    const { left, value, right } = splitArray(m, predicate, deeperAcc, t.suffix.toList());
+    return new SplitImpl(deepR(m, t.prefix, t.deeper, left), value, fromArray(right, m));
+  }
+  
+  throw new Error("Cannot split empty tree");
+};
+
 export const split = <V, A>(
   _predicate: (v: V) => boolean,
   _start: V,
   _t: FingerTree<V, A>,
-): O.Option<Split<V, A>> => NOT_IMPLEMENTED("split");
+): O.Option<Split<V, A>> => {
+  if (isEmpty(_t)) {
+    return O.none();
+  }
+  if (_predicate(_t.m.combine(_start, _t.annotation))) {
+    return O.some(splitTree(_t.m, _predicate, _start, _t));
+  }
+  return O.none();
+};
 
 // ---------------------------------------------------------------------------
 // Higher-order traversals

@@ -86,7 +86,43 @@ export const fromArray = <V, A>(
     return new DeepImpl(m, annotation, prefix, emptyDeeper, suffix);
   }
   
-  // For len >= 5, recursively build
+  if (len === 5) {
+    const prefix = two(m, xs[0], xs[1]);
+    const suffix = two(m, xs[3], xs[4]);
+    const node = branch2(m, xs[2], xs[2]); // Create a node with middle element... wait that's wrong
+    // Actually for 5 elements, better strategy:
+    const prefix5 = three(m, xs[0], xs[1], xs[2]);
+    const suffix5 = two(m, xs[3], xs[4]);
+    const annotation5 = m.combine(prefix5.annotation, suffix5.annotation);
+    const emptyDeeper5: FingerTree<V, Node<V, A>> = empty(m);
+    return new DeepImpl(m, annotation5, prefix5, emptyDeeper5, suffix5);
+  }
+  
+  if (len === 6) {
+    const prefix6 = three(m, xs[0], xs[1], xs[2]);
+    const suffix6 = three(m, xs[3], xs[4], xs[5]);
+    const annotation6 = m.combine(prefix6.annotation, suffix6.annotation);
+    const emptyDeeper6: FingerTree<V, Node<V, A>> = empty(m);
+    return new DeepImpl(m, annotation6, prefix6, emptyDeeper6, suffix6);
+  }
+  
+  if (len === 7) {
+    const prefix7 = three(m, xs[0], xs[1], xs[2]);
+    const suffix7 = three(m, xs[4], xs[5], xs[6]);
+    const node7 = branch2(m, xs[3], xs[3]); // Hmm, that's also wrong
+    // For 7 elements: prefix (3) + deeper (1 node of 2 or 3 elements) + suffix (3)
+    // 3 + 3 + 3 = 9 > 7, so we need 3 + (2-element node) + 2 or similar
+    // Actually: 3 + 1 + 3 = 7 exactly if the middle node has 1 element... but nodes need 2-3 elements
+    // Let's do: 2 + node(3) + 2 = 7, or 3 + node(2) + 2 = 7, or 2 + node(2) + 3 = 7
+    const prefix7a = three(m, xs[0], xs[1], xs[2]);
+    const suffix7a = two(m, xs[5], xs[6]);
+    const node7a = branch2(m, xs[3], xs[4]);
+    const deeper7a = single(m, node7a);
+    const annotation7a = m.combine(prefix7a.annotation, m.combine(deeper7a.annotation, suffix7a.annotation));
+    return new DeepImpl(m, annotation7a, prefix7a, deeper7a, suffix7a);
+  }
+  
+  // For len >= 8, recursively build
   // Take first 4 as prefix, last 4 as suffix, build deeper from middle
   const prefix = four(m, xs[0], xs[1], xs[2], xs[3]);
   const suffix = four(m, xs[len - 4], xs[len - 3], xs[len - 2], xs[len - 1]);
@@ -270,12 +306,220 @@ export const head = <V, A>(_t: FingerTree<V, A>): O.Option<A> => {
   }
   return O.none();
 };
-export const last = <V, A>(_t: FingerTree<V, A>): O.Option<A> =>
-  NOT_IMPLEMENTED("last");
-export const tail = <V, A>(_t: FingerTree<V, A>): O.Option<FingerTree<V, A>> =>
-  NOT_IMPLEMENTED("tail");
-export const init = <V, A>(_t: FingerTree<V, A>): O.Option<FingerTree<V, A>> =>
-  NOT_IMPLEMENTED("init");
+
+export const last = <V, A>(_t: FingerTree<V, A>): O.Option<A> => {
+  if (isEmpty(_t)) {
+    return O.none();
+  }
+  if (isSingle(_t)) {
+    return O.some(_t.value);
+  }
+  if (isDeep(_t)) {
+    // Get the rightmost element of the suffix
+    if (isOne(_t.suffix)) {
+      return O.some(_t.suffix.a);
+    } else if (isTwo(_t.suffix)) {
+      return O.some(_t.suffix.b);
+    } else if (isThree(_t.suffix)) {
+      return O.some(_t.suffix.c);
+    } else if (isFour(_t.suffix)) {
+      return O.some(_t.suffix.d);
+    }
+  }
+  return O.none();
+};
+
+export const tail = <V, A>(_t: FingerTree<V, A>): O.Option<FingerTree<V, A>> => {
+  if (isEmpty(_t)) {
+    return O.none();
+  }
+  if (isSingle(_t)) {
+    return O.some(empty(_t.m));
+  }
+  if (isDeep(_t)) {
+    // Remove first element
+    if (isTwo(_t.prefix)) {
+      // prefix becomes one
+      const newPrefix = one(_t.m, _t.prefix.b);
+      const annotation = _t.m.combine(
+        newPrefix.annotation,
+        _t.m.combine(_t.deeper.annotation, _t.suffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, newPrefix, _t.deeper, _t.suffix));
+    } else if (isThree(_t.prefix)) {
+      // prefix becomes two
+      const newPrefix = two(_t.m, _t.prefix.b, _t.prefix.c);
+      const annotation = _t.m.combine(
+        newPrefix.annotation,
+        _t.m.combine(_t.deeper.annotation, _t.suffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, newPrefix, _t.deeper, _t.suffix));
+    } else if (isFour(_t.prefix)) {
+      // prefix becomes three
+      const newPrefix = three(_t.m, _t.prefix.b, _t.prefix.c, _t.prefix.d);
+      const annotation = _t.m.combine(
+        newPrefix.annotation,
+        _t.m.combine(_t.deeper.annotation, _t.suffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, newPrefix, _t.deeper, _t.suffix));
+    } else if (isOne(_t.prefix)) {
+      // prefix is one, need to get from deeper
+      if (isEmpty(_t.deeper)) {
+        // No deeper, just return suffix as tree
+        if (isOne(_t.suffix)) {
+          return O.some(single(_t.m, _t.suffix.a));
+        } else if (isTwo(_t.suffix)) {
+          return O.some(fromArray([_t.suffix.a, _t.suffix.b], _t.m));
+        } else if (isThree(_t.suffix)) {
+          return O.some(fromArray([_t.suffix.a, _t.suffix.b, _t.suffix.c], _t.m));
+        } else if (isFour(_t.suffix)) {
+          return O.some(fromArray([_t.suffix.a, _t.suffix.b, _t.suffix.c, _t.suffix.d], _t.m));
+        }
+      } else {
+        // Get first node from deeper
+        const headNode = head(_t.deeper);
+        if (O.isNone(headNode)) {
+          // Deeper should not be empty if isDeep checked it
+          if (isOne(_t.suffix)) {
+            return O.some(single(_t.m, _t.suffix.a));
+          } else if (isTwo(_t.suffix)) {
+            return O.some(fromArray([_t.suffix.a, _t.suffix.b], _t.m));
+          } else if (isThree(_t.suffix)) {
+            return O.some(fromArray([_t.suffix.a, _t.suffix.b, _t.suffix.c], _t.m));
+          } else if (isFour(_t.suffix)) {
+            return O.some(fromArray([_t.suffix.a, _t.suffix.b, _t.suffix.c, _t.suffix.d], _t.m));
+          }
+        }
+        const firstNode = headNode.value;
+        const restDeeper = tail(_t.deeper);
+        
+        // Convert node to affix
+        let newPrefix: any;
+        if (firstNode.toList().length === 2) {
+          const [a, b] = firstNode.toList();
+          newPrefix = two(_t.m, a, b);
+        } else {
+          const [a, b, c] = firstNode.toList();
+          newPrefix = three(_t.m, a, b, c);
+        }
+        
+        // If restDeeper is None, we've exhausted deeper, check if we can still form a valid tree
+        if (O.isNone(restDeeper)) {
+          const deeper = empty(_t.m);
+          const annotation = _t.m.combine(
+            newPrefix.annotation,
+            _t.suffix.annotation
+          );
+          return O.some(new DeepImpl(_t.m, annotation, newPrefix, deeper, _t.suffix));
+        }
+        
+        const deeper = restDeeper.value;
+        const annotation = _t.m.combine(
+          newPrefix.annotation,
+          _t.m.combine(deeper.annotation, _t.suffix.annotation)
+        );
+        return O.some(new DeepImpl(_t.m, annotation, newPrefix, deeper, _t.suffix));
+      }
+    }
+  }
+  return O.none();
+};
+
+export const init = <V, A>(_t: FingerTree<V, A>): O.Option<FingerTree<V, A>> => {
+  if (isEmpty(_t)) {
+    return O.none();
+  }
+  if (isSingle(_t)) {
+    return O.some(empty(_t.m));
+  }
+  if (isDeep(_t)) {
+    // Remove last element
+    if (isTwo(_t.suffix)) {
+      // suffix becomes one
+      const newSuffix = one(_t.m, _t.suffix.a);
+      const annotation = _t.m.combine(
+        _t.prefix.annotation,
+        _t.m.combine(_t.deeper.annotation, newSuffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, _t.prefix, _t.deeper, newSuffix));
+    } else if (isThree(_t.suffix)) {
+      // suffix becomes two
+      const newSuffix = two(_t.m, _t.suffix.a, _t.suffix.b);
+      const annotation = _t.m.combine(
+        _t.prefix.annotation,
+        _t.m.combine(_t.deeper.annotation, newSuffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, _t.prefix, _t.deeper, newSuffix));
+    } else if (isFour(_t.suffix)) {
+      // suffix becomes three
+      const newSuffix = three(_t.m, _t.suffix.a, _t.suffix.b, _t.suffix.c);
+      const annotation = _t.m.combine(
+        _t.prefix.annotation,
+        _t.m.combine(_t.deeper.annotation, newSuffix.annotation)
+      );
+      return O.some(new DeepImpl(_t.m, annotation, _t.prefix, _t.deeper, newSuffix));
+    } else if (isOne(_t.suffix)) {
+      // suffix is one, need to get from deeper
+      if (isEmpty(_t.deeper)) {
+        // No deeper, just return prefix as tree
+        if (isOne(_t.prefix)) {
+          return O.some(single(_t.m, _t.prefix.a));
+        } else if (isTwo(_t.prefix)) {
+          return O.some(fromArray([_t.prefix.a, _t.prefix.b], _t.m));
+        } else if (isThree(_t.prefix)) {
+          return O.some(fromArray([_t.prefix.a, _t.prefix.b, _t.prefix.c], _t.m));
+        } else if (isFour(_t.prefix)) {
+          return O.some(fromArray([_t.prefix.a, _t.prefix.b, _t.prefix.c, _t.prefix.d], _t.m));
+        }
+      } else {
+        // Get last node from deeper
+        const lastNode = last(_t.deeper);
+        if (O.isNone(lastNode)) {
+          // Deeper should not be empty if isDeep checked it
+          if (isOne(_t.prefix)) {
+            return O.some(single(_t.m, _t.prefix.a));
+          } else if (isTwo(_t.prefix)) {
+            return O.some(fromArray([_t.prefix.a, _t.prefix.b], _t.m));
+          } else if (isThree(_t.prefix)) {
+            return O.some(fromArray([_t.prefix.a, _t.prefix.b, _t.prefix.c], _t.m));
+          } else if (isFour(_t.prefix)) {
+            return O.some(fromArray([_t.prefix.a, _t.prefix.b, _t.prefix.c, _t.prefix.d], _t.m));
+          }
+        }
+        const lastNodeVal = lastNode.value;
+        const restDeeper = init(_t.deeper);
+        
+        // Convert node to affix
+        let newSuffix: any;
+        if (lastNodeVal.toList().length === 2) {
+          const [a, b] = lastNodeVal.toList();
+          newSuffix = two(_t.m, a, b);
+        } else {
+          const [a, b, c] = lastNodeVal.toList();
+          newSuffix = three(_t.m, a, b, c);
+        }
+        
+        // If restDeeper is None, we've exhausted deeper, check if we can still form a valid tree
+        if (O.isNone(restDeeper)) {
+          const deeper = empty(_t.m);
+          const annotation = _t.m.combine(
+            _t.prefix.annotation,
+            newSuffix.annotation
+          );
+          return O.some(new DeepImpl(_t.m, annotation, _t.prefix, deeper, newSuffix));
+        }
+        
+        const deeper = restDeeper.value;
+        const annotation = _t.m.combine(
+          _t.prefix.annotation,
+          _t.m.combine(deeper.annotation, newSuffix.annotation)
+        );
+        return O.some(new DeepImpl(_t.m, annotation, _t.prefix, deeper, newSuffix));
+      }
+    }
+  }
+  return O.none();
+};
 
 // ---------------------------------------------------------------------------
 // Concat & Split  (the two operations that justify finger trees)
